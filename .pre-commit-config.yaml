@@ -5,7 +5,6 @@ repos:
     - id: go-fmt
     - id: go-vet
       exclude: "tools.go"
-    - id: go-lint
     - id: go-imports
     - id: go-cyclo
       args: [-over=15]

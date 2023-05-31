@@ -47,7 +47,7 @@ FROM base as builder
 WORKDIR /app
 
 # Build the kraftwerk
-RUN go build -o cmd/kraftwerk cmd/main.go
+RUN go build -o cmd/kraftwerk main.go
 
 # Move to /dist directory as the place for resulting binary folder
 WORKDIR /dist

@@ -63,5 +63,5 @@ docker build --ssh default --target production -t kraftwerk_init_helper:latest .
 Run the image:
 
 ```bash
-docker run -it --name multikeyjwt kraftwerk_init_helper:latest
+docker run --rm -it --name kraftwerk_helper kraftwerk_init_helper:latest
 ```
