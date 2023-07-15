@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 
@@ -34,9 +38,19 @@ func main() {
 				Usage: "Path to CA certificates (directory)",
 				Value: "/ca_public",
 			},
+			&cli.StringFlag{
+				Name:  "datapath",
+				Usage: "Base path for saving things",
+				Value: "/data/persistent",
+			},
+			&cli.IntFlag{
+				Name:  "keybits",
+				Usage: "How many bits to private key",
+				Value: 4096,
+			},
 			&cli.BoolFlag{
 				Name:  "insecure",
-				Usage: "Do not verify server certificate",
+				Usage: "Do not verify RASENMAEHER server certificate",
 				Value: false,
 			},
 		},
@@ -84,6 +98,13 @@ func main() {
 			}
 			log.Debug("certpool: ", pp.Sprint(certpool))
 
+			keypair, err := createKeyPair(ctx.String("datapath"), ctx.Int("keybits"))
+			if err != nil {
+				log.Fatal(err)
+				return cli.Exit("Could not create keypair", 1)
+			}
+			log.Debug("keypair: ", pp.Sprint(keypair))
+
 			return nil
 		},
 	}
@@ -120,4 +141,62 @@ func readCAs(capath string) (*x509.CertPool, error) {
 	}
 
 	return certpool, nil
+}
+
+func makeDirectoryIfNotExists(path string) error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return os.Mkdir(path, os.ModeDir|0755)
+	}
+	return nil
+}
+
+func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
+	privdir := path.Join(datapath, "private")
+	err := makeDirectoryIfNotExists(privdir)
+	if err != nil {
+		return nil, err
+	}
+	pubdir := path.Join(datapath, "public")
+	err = makeDirectoryIfNotExists(pubdir)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Info("Generating keypair")
+	keypair, err := rsa.GenerateKey(rand.Reader, keybits)
+	if err != nil {
+		return nil, err
+	}
+
+	privKeyPEM := new(bytes.Buffer)
+	err = pem.Encode(privKeyPEM, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(keypair),
+	})
+	if err != nil {
+		return nil, err
+	}
+	privkeypath := path.Join(privdir, "mtsclient.key")
+	err = os.WriteFile(privkeypath, privKeyPEM.Bytes(), 640)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("Wrote ", privkeypath)
+
+	pubKeyPEM := new(bytes.Buffer)
+	err = pem.Encode(pubKeyPEM, &pem.Block{
+		Type:  "RSA PUBLIC KEY",
+		Bytes: x509.MarshalPKCS1PublicKey(&keypair.PublicKey),
+	})
+	if err != nil {
+		return nil, err
+	}
+	pubkeypath := path.Join(pubdir, "mtsclient.pub")
+	err = os.WriteFile(pubkeypath, pubKeyPEM.Bytes(), 644)
+	if err != nil {
+		return nil, err
+	}
+	log.Info("Wrote ", pubkeypath)
+
+	return keypair, nil
 }
