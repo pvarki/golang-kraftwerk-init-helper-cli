@@ -3,6 +3,7 @@ module github.com/pvarki/golang-kraftwerk-init-helper-cli
 go 1.20
 
 require (
+	github.com/buger/jsonparser v1.1.1 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
 	github.com/k0kubun/pp/v3 v3.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect

@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/json"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/buger/jsonparser"
 	"github.com/k0kubun/pp/v3"
 	"github.com/romnn/flags4urfavecli/flags"
 	log "github.com/sirupsen/logrus"
@@ -63,33 +64,31 @@ func main() {
 				cli.ShowAppHelpAndExit(ctx, 1)
 			}
 
-			jfile, err := os.ReadFile(ctx.Args().Get(0))
+			jsondata, err := os.ReadFile(ctx.Args().Get(0))
 			if err != nil {
 				log.Fatal(err)
 				return cli.Exit("Cannot open manifest file", 1)
 			}
-			var payload map[string]interface{}
-			err = json.Unmarshal(jfile, &payload)
+			dnsName, err := jsonparser.GetString(jsondata, "product", "dns")
 			if err != nil {
 				log.Fatal(err)
-				return cli.Exit("Cannot parse JSON file", 1)
+				return cli.Exit("Could not resolve product DNS name", 1)
 			}
-			log.Debug("payload: ", pp.Sprint(payload))
+			log.Info("Product DNS name ", dnsName)
 
-			rmPayload, ok := payload["rasenmaeher"]
-			if !ok {
-				msg := "No key for RASENMAEHER info in manifest"
-				log.Fatal(msg)
-				return cli.Exit(msg, 1)
+			rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+			if err != nil {
+				log.Fatal(err)
+				return cli.Exit("Could not resolve RASENMAEHER address", 1)
 			}
-			log.Debug("rmPayload: ", pp.Sprint(rmPayload))
-			productPayload, ok := payload["product"]
-			if !ok {
-				msg := "No key for product info in manifest"
-				log.Fatal(msg)
-				return cli.Exit(msg, 1)
+			log.Info("Using RASENMAEHER at ", rmBase)
+
+			rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "csr_jwt")
+			if err != nil {
+				log.Fatal(err)
+				return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
 			}
-			log.Debug("productPayload: ", pp.Sprint(productPayload))
+			_ = rmJWT // FIXME: remove when we actually use this value
 
 			certpool, err := readCAs(ctx.String("capath"))
 			if err != nil {
@@ -98,12 +97,28 @@ func main() {
 			}
 			log.Debug("certpool: ", pp.Sprint(certpool))
 
-			keypair, err := createKeyPair(ctx.String("datapath"), ctx.Int("keybits"))
+			datapath := ctx.String("datapath")
+			keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
 			if err != nil {
 				log.Fatal(err)
 				return cli.Exit("Could not create keypair", 1)
 			}
-			log.Debug("keypair: ", pp.Sprint(keypair))
+			//log.Debug("keypair: ", pp.Sprint(keypair))
+
+			csrBytes, err := createCSR(dnsName, keypair)
+			if err != nil {
+				log.Fatal(err)
+				return cli.Exit("Could not create CSR", 1)
+			}
+			csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
+			err = os.WriteFile(csrpath, csrBytes, 644)
+			if err != nil {
+				log.Fatal(err)
+				return cli.Exit("Could not save CSR", 1)
+			}
+			log.Info("Wrote ", csrpath)
+
+			// TODO: send the CSR to RASENMAEHER and save the returned cert (remember cfssl encoding for the PEMs)
 
 			return nil
 		},
@@ -112,6 +127,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
+	var csrTemplate = x509.CertificateRequest{
+		Subject:            pkix.Name{CommonName: name},
+		SignatureAlgorithm: x509.SHA512WithRSA,
+		/*
+			TODO: How do we add the extensions for clientAuth ?
+		*/
+	}
+	csrCertificate, err := x509.CreateCertificateRequest(rand.Reader, &csrTemplate, keys)
+	if err != nil {
+		return nil, err
+	}
+	csr := pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE REQUEST", Bytes: csrCertificate,
+	})
+	return csr, nil
 }
 
 func readCAs(capath string) (*x509.CertPool, error) {
