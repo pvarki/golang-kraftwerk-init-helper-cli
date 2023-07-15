@@ -1,4 +1,4 @@
-FROM golang:1.20.2-buster AS base
+FROM golang:1.20-bookworm AS base
 
 ENV \
     CGO_ENABLED=0 \
