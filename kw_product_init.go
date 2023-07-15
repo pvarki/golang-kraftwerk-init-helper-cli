@@ -6,6 +6,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -129,13 +130,60 @@ func main() {
 	}
 }
 
+// references:
+//
+//		https://github.com/tigera/key-cert-provisioner/blob/master/pkg/tls/tls.go#L40
+//		https://gist.github.com/evantill/ebeb9535458c108e35207e0dbf6fe351#file-main_critical_extendedkeyusage_timestamping-go-L43
+//	 https://github.com/golang/go/issues/13739
 func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
+	var oidExtensionExtendedKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 37}
+	var oidExtKeyUsageClientAuth = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 3, 2}
+	var oidExtKeyUsageServerAuth = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 3, 1}
+
+	var certExtentions []pkix.Extension
+
+	basicConstraintsExt := pkix.Extension{}
+	basicConstraintsExt.Id = asn1.ObjectIdentifier{2, 5, 29, 19}
+	basicConstraintsExt.Critical = true
+	val, err := asn1.Marshal(basicConstraints{false, -1})
+	if err != nil {
+		return nil, err
+	}
+	basicConstraintsExt.Value = val
+	certExtentions = append(certExtentions, basicConstraintsExt)
+
+	extClientAuth := pkix.Extension{}
+	extClientAuth.Id = oidExtensionExtendedKeyUsage
+	extClientAuth.Critical = true
+	val, err = asn1.Marshal([]asn1.ObjectIdentifier{oidExtKeyUsageClientAuth})
+	if err != nil {
+		return nil, err
+	}
+	extClientAuth.Value = val
+	certExtentions = append(certExtentions, extClientAuth)
+
+	extServerAuth := pkix.Extension{}
+	extServerAuth.Id = oidExtensionExtendedKeyUsage
+	extServerAuth.Critical = true
+	val, err = asn1.Marshal([]asn1.ObjectIdentifier{oidExtKeyUsageServerAuth})
+	if err != nil {
+		return nil, err
+	}
+	extServerAuth.Value = val
+	certExtentions = append(certExtentions, extServerAuth)
+
+	usageVal, err := marshalKeyUsage(x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment)
+	if err != nil {
+		return nil, err
+	}
+	certExtentions = append(certExtentions, usageVal)
+
+	log.Debug("certExtentions: ", pp.Sprint(certExtentions))
+
 	var csrTemplate = x509.CertificateRequest{
 		Subject:            pkix.Name{CommonName: name},
 		SignatureAlgorithm: x509.SHA512WithRSA,
-		/*
-			TODO: How do we add the extensions for clientAuth ?
-		*/
+		ExtraExtensions:    certExtentions,
 	}
 	csrCertificate, err := x509.CreateCertificateRequest(rand.Reader, &csrTemplate, keys)
 	if err != nil {
@@ -232,4 +280,60 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 	log.Info("Wrote ", pubkeypath)
 
 	return keypair, nil
+}
+
+// basicConstraints is a struct needed for creating a template.
+type basicConstraints struct {
+	IsCA       bool `asn1:"optional"`
+	MaxPathLen int  `asn1:"optional,default:-1"`
+}
+
+// marshalKeyUsage has been copied from the golang package crypto/x509/x509.go in order to marshal keyUsage.
+func marshalKeyUsage(ku x509.KeyUsage) (pkix.Extension, error) {
+	ext := pkix.Extension{Id: []int{2, 5, 29, 15}, Critical: true}
+
+	var a [2]byte
+	a[0] = reverseBitsInAByte(byte(ku))
+	a[1] = reverseBitsInAByte(byte(ku >> 8))
+
+	l := 1
+	if a[1] != 0 {
+		l = 2
+	}
+
+	bitString := a[:l]
+	var err error
+	ext.Value, err = asn1.Marshal(asn1.BitString{Bytes: bitString, BitLength: asn1BitLength(bitString)})
+	if err != nil {
+		return ext, err
+	}
+	return ext, nil
+}
+
+// reverseBitsInAByte has been copied from the golang package crypto/x509/x509.go in order to marshal keyUsage.
+func reverseBitsInAByte(in byte) byte {
+	b1 := in>>4 | in<<4
+	b2 := b1>>2&0x33 | b1<<2&0xcc
+	b3 := b2>>1&0x55 | b2<<1&0xaa
+	return b3
+}
+
+// asn1BitLength has been copied from the golang package crypto/x509/x509.go in order to marshal keyUsage.
+// asn1BitLength returns the bit-length of bitString by considering the most-significant bit in a byte to be the "first"
+// bit. This convention matches ASN.1, but differs from almost everything else.
+func asn1BitLength(bitString []byte) int {
+	bitLen := len(bitString) * 8
+
+	for i := range bitString {
+		b := bitString[len(bitString)-i-1]
+
+		for bit := uint(0); bit < 8; bit++ {
+			if (b>>bit)&1 == 1 {
+				return bitLen
+			}
+			bitLen--
+		}
+	}
+
+	return 0
 }
