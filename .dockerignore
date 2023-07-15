@@ -14,7 +14,6 @@
 # Unignore Dockerfile and other useful files
 !**/Dockerfile
 !**/.dockerignore
-!**/.gitattributes
 !**/LICENSE
 
 ### Above combination will ignore all files without extension ###
@@ -26,5 +25,6 @@ coverage*
 *.exe
 build/
 
-*.p12
-*.pem
+# docker build files (so just changing them does not invalidate *all* caches)
+.dockerignore
+Dockerfile
