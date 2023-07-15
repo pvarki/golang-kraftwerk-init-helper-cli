@@ -47,20 +47,20 @@ FROM base as builder
 WORKDIR /app
 
 # Build the kraftwerk
-RUN go build -o cmd/kraftwerk main.go
+RUN go build -o cmd/kw_product_init kw_product_init.go
 
 # Move to /dist directory as the place for resulting binary folder
 WORKDIR /dist
 
 # Copy binary from build to main folder
-RUN cp /app/cmd/kraftwerk .
+RUN cp /app/cmd/kw_product_init .
 
 
 # production ------------------------------
 
 FROM scratch as production
 
-COPY --from=builder /dist/kraftwerk /
+COPY --from=builder /dist/kw_product_init /
 
 # Command to run the executable
-ENTRYPOINT ["/kraftwerk"]
+ENTRYPOINT ["/kw_product_init"]
