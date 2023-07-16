@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"github.com/buger/jsonparser"
+
 	"github.com/k0kubun/pp/v3"
 	"github.com/romnn/flags4urfavecli/flags"
 	log "github.com/sirupsen/logrus"
@@ -26,6 +27,15 @@ var Rev = ""
 
 // Version is incremented using bump2version
 const Version = "0.1.1"
+
+func commonManifestCheck(cCtx *cli.Context) error {
+	log.Debug("cCtx.Args(): ", pp.Sprint(cCtx.Args()))
+	if cCtx.Args().Len() < 1 {
+		log.Fatal("No manifest path given")
+		cli.ShowAppHelpAndExit(cCtx, 1)
+	}
+	return nil
+}
 
 func main() {
 	app := &cli.App{
@@ -45,83 +55,102 @@ func main() {
 				Usage: "Base path for saving things",
 				Value: "/data/persistent",
 			},
-			&cli.IntFlag{
-				Name:  "keybits",
-				Usage: "How many bits to private key",
-				Value: 4096,
-			},
 			&cli.BoolFlag{
 				Name:  "insecure",
 				Usage: "Do not verify RASENMAEHER server certificate",
 				Value: false,
 			},
 		},
-		Action: func(ctx *cli.Context) error {
-			if level, err := log.ParseLevel(ctx.String("log")); err == nil {
+		Before: func(cCtx *cli.Context) error {
+			if level, err := log.ParseLevel(cCtx.String("log")); err == nil {
 				log.SetLevel(level)
 			}
-			if ctx.Args().Len() < 1 {
-				log.Fatal("No manifest path given")
-				cli.ShowAppHelpAndExit(ctx, 1)
-			}
-
-			jsondata, err := os.ReadFile(ctx.Args().Get(0))
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Cannot open manifest file", 1)
-			}
-			dnsName, err := jsonparser.GetString(jsondata, "product", "dns")
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not resolve product DNS name", 1)
-			}
-			log.Info("Product DNS name ", dnsName)
-
-			rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not resolve RASENMAEHER address", 1)
-			}
-			log.Info("Using RASENMAEHER at ", rmBase)
-
-			rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "csr_jwt")
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
-			}
-			_ = rmJWT // FIXME: remove when we actually use this value
-
-			certpool, err := readCAs(ctx.String("capath"))
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not load CAs", 1)
-			}
-			log.Debug("certpool: ", pp.Sprint(certpool))
-
-			datapath := ctx.String("datapath")
-			keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not create keypair", 1)
-			}
-			//log.Debug("keypair: ", pp.Sprint(keypair))
-
-			csrBytes, err := createCSR(dnsName, keypair)
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not create CSR", 1)
-			}
-			csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
-			err = os.WriteFile(csrpath, csrBytes, 644)
-			if err != nil {
-				log.Fatal(err)
-				return cli.Exit("Could not save CSR", 1)
-			}
-			log.Info("Wrote ", csrpath)
-
-			// TODO: send the CSR to RASENMAEHER and save the returned cert (remember cfssl encoding for the PEMs)
-
 			return nil
+		},
+		Commands: []*cli.Command{
+			&cli.Command{
+				Name:   "renew",
+				Usage:  "Renew the cert",
+				Before: commonManifestCheck,
+				Action: func(ctx *cli.Context) error {
+					log.Debug("Debug test")
+					log.Info("Info test")
+					msg := "Not implemented"
+					log.Fatal(msg)
+					return cli.Exit(msg, 1)
+				},
+			},
+			&cli.Command{
+				Name:   "init",
+				Usage:  "Create key, CSR and get a signed cert",
+				Before: commonManifestCheck,
+				Flags: []cli.Flag{
+					&cli.IntFlag{
+						Name:  "keybits",
+						Usage: "How many bits to private key",
+						Value: 4096,
+					},
+				},
+				Action: func(ctx *cli.Context) error {
+					jsondata, err := os.ReadFile(ctx.Args().Get(0))
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Cannot open manifest file", 1)
+					}
+					dnsName, err := jsonparser.GetString(jsondata, "product", "dns")
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not resolve product DNS name", 1)
+					}
+					log.Info("Product DNS name ", dnsName)
+
+					rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not resolve RASENMAEHER address", 1)
+					}
+					log.Info("Using RASENMAEHER at ", rmBase)
+
+					rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "csr_jwt")
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
+					}
+					_ = rmJWT // FIXME: remove when we actually use this value
+
+					certpool, err := readCAs(ctx.String("capath"))
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not load CAs", 1)
+					}
+					log.Debug("certpool: ", pp.Sprint(certpool))
+
+					datapath := ctx.String("datapath")
+					keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not create keypair", 1)
+					}
+					//log.Debug("keypair: ", pp.Sprint(keypair))
+
+					csrBytes, err := createCSR(dnsName, keypair)
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not create CSR", 1)
+					}
+					csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
+					err = os.WriteFile(csrpath, csrBytes, 644)
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not save CSR", 1)
+					}
+					log.Info("Wrote ", csrpath)
+
+					// TODO: send the CSR to RASENMAEHER and save the returned cert (remember cfssl encoding for the PEMs)
+
+					return nil
+				},
+			},
 		},
 	}
 	err := app.Run(os.Args)
@@ -132,9 +161,9 @@ func main() {
 
 // references:
 //
-//		https://github.com/tigera/key-cert-provisioner/blob/master/pkg/tls/tls.go#L40
-//		https://gist.github.com/evantill/ebeb9535458c108e35207e0dbf6fe351#file-main_critical_extendedkeyusage_timestamping-go-L43
-//	 https://github.com/golang/go/issues/13739
+// https://github.com/tigera/key-cert-provisioner/blob/master/pkg/tls/tls.go#L40
+// https://gist.github.com/evantill/ebeb9535458c108e35207e0dbf6fe351#file-main_critical_extendedkeyusage_timestamping-go-L43
+// https://github.com/golang/go/issues/13739
 func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
 	var oidExtensionExtendedKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 37}
 	var oidExtKeyUsageClientAuth = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 3, 2}
@@ -243,7 +272,7 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 
-	log.Info("Generating keypair")
+	log.WithFields(log.Fields{"keybits": keybits}).Info("Generating keypair")
 	keypair, err := rsa.GenerateKey(rand.Reader, keybits)
 	if err != nil {
 		return nil, err
