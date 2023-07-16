@@ -14,6 +14,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/urfave/cli/v2"
 
@@ -39,6 +40,7 @@ func commonManifestCheck(cCtx *cli.Context) error {
 	return nil
 }
 
+// FIXME: refactor
 func main() {
 	app := &cli.App{
 		Version:   Version,
@@ -106,7 +108,7 @@ func main() {
 					})
 					url := fmt.Sprintf("%sapi/v1/healthcheck", rmBase)
 					log.WithFields(log.Fields{"url": url}).Debug("GETting")
-					resp, err := client.R().Get(url)
+					resp, err := client.R().SetResult(map[string]interface{}{}).Get(url)
 					if err != nil {
 						log.Fatal(err)
 						return cli.Exit("Could not ping RASENMAEHER", 1)
@@ -116,6 +118,8 @@ func main() {
 						log.Fatal(msg)
 						return cli.Exit("Could not ping RASENMAEHER", 1)
 					}
+					log.Debug("resp.Body(): ", pp.Sprint(string(resp.Body()[:])))
+					log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
 					log.Info("Ping OK")
 					return nil
 				},
@@ -209,8 +213,23 @@ func main() {
 					client.SetAuthScheme("Bearer")
 					client.SetAuthToken(rmJWT)
 
-					resp, err := client.R().Get(fmt.Sprintf("%sapi/v1/healthcheck", rmBase))
-					_ = resp
+					url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
+					payload := map[string]interface{}{"csr": strings.ReplaceAll(string(csrBytes[:]), "\n", "\\n")}
+					log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
+					resp, err := client.R().
+						SetResult(map[string]interface{}{}).
+						SetBody(payload).
+						Post(url)
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Error contacting RASENMAEHER", 1)
+					}
+					if !resp.IsSuccess() {
+						msg := "RASENMAEHER replied with error"
+						log.Fatal(msg)
+						return cli.Exit(msg, 1)
+					}
+					log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
 
 					return nil
 				},
