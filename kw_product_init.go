@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -14,12 +15,13 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/buger/jsonparser"
+	"github.com/urfave/cli/v2"
 
+	"github.com/buger/jsonparser"
+	"github.com/go-resty/resty/v2"
 	"github.com/k0kubun/pp/v3"
 	"github.com/romnn/flags4urfavecli/flags"
 	log "github.com/sirupsen/logrus"
-	"github.com/urfave/cli/v2"
 )
 
 // Rev is set on build time to the git HEAD
@@ -69,6 +71,56 @@ func main() {
 		},
 		Commands: []*cli.Command{
 			&cli.Command{
+				Name:   "ping",
+				Usage:  "Ping RASENMAEHER healthcheck endpoint",
+				Before: commonManifestCheck,
+				Action: func(ctx *cli.Context) error {
+					certpool, err := x509.SystemCertPool()
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not load system CAs", 1)
+					}
+					certpool, err = readCAs(ctx.String("capath"), certpool)
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not load CAs", 1)
+					}
+					//log.Debug("certpool: ", pp.Sprint(certpool))
+
+					jsondata, err := os.ReadFile(ctx.Args().Get(0))
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Cannot open manifest file", 1)
+					}
+
+					rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not resolve RASENMAEHER address", 1)
+					}
+					log.Info("Using RASENMAEHER at ", rmBase)
+
+					client := resty.New()
+					client.SetTLSClientConfig(&tls.Config{
+						RootCAs: certpool,
+					})
+					url := fmt.Sprintf("%sapi/v1/healthcheck", rmBase)
+					log.WithFields(log.Fields{"url": url}).Debug("GETting")
+					resp, err := client.R().Get(url)
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not ping RASENMAEHER", 1)
+					}
+					if resp.StatusCode() != 200 {
+						msg := fmt.Sprintf("Status code %d!=200", resp.StatusCode())
+						log.Fatal(msg)
+						return cli.Exit("Could not ping RASENMAEHER", 1)
+					}
+					log.Info("Ping OK")
+					return nil
+				},
+			},
+			&cli.Command{
 				Name:   "renew",
 				Usage:  "Renew the cert",
 				Before: commonManifestCheck,
@@ -116,14 +168,18 @@ func main() {
 						log.Fatal(err)
 						return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
 					}
-					_ = rmJWT // FIXME: remove when we actually use this value
 
-					certpool, err := readCAs(ctx.String("capath"))
+					certpool, err := x509.SystemCertPool()
+					if err != nil {
+						log.Fatal(err)
+						return cli.Exit("Could not load system CAs", 1)
+					}
+					certpool, err = readCAs(ctx.String("capath"), certpool)
 					if err != nil {
 						log.Fatal(err)
 						return cli.Exit("Could not load CAs", 1)
 					}
-					log.Debug("certpool: ", pp.Sprint(certpool))
+					//log.Debug("certpool: ", pp.Sprint(certpool))
 
 					datapath := ctx.String("datapath")
 					keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
@@ -146,7 +202,15 @@ func main() {
 					}
 					log.Info("Wrote ", csrpath)
 
-					// TODO: send the CSR to RASENMAEHER and save the returned cert (remember cfssl encoding for the PEMs)
+					client := resty.New()
+					client.SetTLSClientConfig(&tls.Config{
+						RootCAs: certpool,
+					})
+					client.SetAuthScheme("Bearer")
+					client.SetAuthToken(rmJWT)
+
+					resp, err := client.R().Get(fmt.Sprintf("%sapi/v1/healthcheck", rmBase))
+					_ = resp
 
 					return nil
 				},
@@ -224,18 +288,18 @@ func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
 	return csr, nil
 }
 
-func readCAs(capath string) (*x509.CertPool, error) {
+func readCAs(capath string, certpool *x509.CertPool) (*x509.CertPool, error) {
 	certFiles, err := filepath.Glob(filepath.Join(capath, "*.pem"))
 	if err != nil {
 		return nil, fmt.Errorf("Failed to scan certificate dir \"%s\": %s", capath, err)
 	}
-	certpool := x509.NewCertPool()
 
 	sort.Strings(certFiles)
 	for _, file := range certFiles {
-		log.Info("Adding ", file)
+		log.WithFields(log.Fields{"file": file}).Debug("Adding cert")
 		raw, err := os.ReadFile(file)
 		if err != nil {
+			log.WithFields(log.Fields{"file": file}).Error("Could not open file")
 			return nil, err
 		}
 		for {
@@ -244,7 +308,14 @@ func readCAs(capath string) (*x509.CertPool, error) {
 				break
 			}
 			if block.Type == "CERTIFICATE" {
-				certpool.AppendCertsFromPEM(block.Bytes)
+				certs, err := x509.ParseCertificates(block.Bytes)
+				if err != nil {
+					log.WithFields(log.Fields{"file": file}).Error("Could parse certs from")
+					continue
+				}
+				for _, cert := range certs {
+					certpool.AddCert(cert)
+				}
 			}
 			raw = rest
 		}
