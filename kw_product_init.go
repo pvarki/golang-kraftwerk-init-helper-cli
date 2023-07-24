@@ -161,6 +161,8 @@ func readyAction(ctx *cli.Context) error {
 		log.Fatal(err)
 		return cli.Exit("Could not resolve RASENMAEHER address", 1)
 	}
+	// FIXME: we should probably expand the spec to be able to specify the mTLS base_uri
+	rmBase = strings.ReplaceAll(rmBase, "https://", "https://mtls.")
 	log.Info("Using RASENMAEHER at ", rmBase)
 
 	client := resty.New()
