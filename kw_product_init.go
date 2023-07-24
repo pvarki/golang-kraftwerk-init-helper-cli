@@ -15,6 +15,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/buger/jsonparser"
 	"github.com/go-resty/resty/v2"
@@ -332,7 +333,7 @@ func savePublic(content []byte, name string, datapath string) error {
 	return nil
 }
 
-func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty.Client) ([]byte, error) {
+func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty.Client) (string, error) {
 	url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
 	payload := map[string]interface{}{"csr": string(csrBytes[:])}
 	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
@@ -341,21 +342,22 @@ func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty
 		SetBody(payload).
 		Post(url)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if !resp.IsSuccess() {
-		return nil, fmt.Errorf("RASENMAEHER replied with error")
+		return "", fmt.Errorf("RASENMAEHER replied with error")
 	}
 	log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
 
-	certContent, _, _, err := jsonparser.Get(resp.Body(), "certificate")
+	certContent, err := jsonparser.GetString(resp.Body(), "certificate")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
+	certContent = strings.ReplaceAll(certContent, "\\n", "\n")
 
-	err = savePublic(certContent, "mtlsclient.pem", datapath)
+	err = savePublic([]byte(certContent), "mtlsclient.pem", datapath)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 
 	return certContent, nil
