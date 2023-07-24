@@ -199,7 +199,7 @@ func main() {
 						return cli.Exit("Could not create CSR", 1)
 					}
 					csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
-					err = os.WriteFile(csrpath, csrBytes, 644)
+					err = os.WriteFile(csrpath, csrBytes, 0644)
 					if err != nil {
 						log.Fatal(err)
 						return cli.Exit("Could not save CSR", 1)
@@ -377,7 +377,7 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 	privkeypath := path.Join(privdir, "mtsclient.key")
-	err = os.WriteFile(privkeypath, privKeyPEM.Bytes(), 640)
+	err = os.WriteFile(privkeypath, privKeyPEM.Bytes(), 0640)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +392,7 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 	pubkeypath := path.Join(pubdir, "mtsclient.pub")
-	err = os.WriteFile(pubkeypath, pubKeyPEM.Bytes(), 644)
+	err = os.WriteFile(pubkeypath, pubKeyPEM.Bytes(), 0644)
 	if err != nil {
 		return nil, err
 	}
