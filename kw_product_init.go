@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -29,10 +30,26 @@ var Rev = ""
 // Version is incremented using bump2version
 const Version = "0.1.1"
 
+func fileExist(pth string) bool {
+	if _, err := os.Stat(pth); err == nil {
+		return true
+	} else if errors.Is(err, os.ErrNotExist) {
+		return false
+	} else {
+		// Schrodinger: file may or may not exist. See err for details.
+		log.Errorf("Can't verify %s: %s", pth, err)
+		return false
+	}
+}
+
 func commonManifestCheck(cCtx *cli.Context) error {
 	log.Debug("cCtx.Args(): ", pp.Sprint(cCtx.Args()))
 	if cCtx.Args().Len() < 1 {
 		log.Fatal("No manifest path given")
+		cli.ShowAppHelpAndExit(cCtx, 1)
+	}
+	if !fileExist(cCtx.Args().Get(0)) {
+		log.Fatal("Manifest does not exist")
 		cli.ShowAppHelpAndExit(cCtx, 1)
 	}
 	return nil
@@ -82,6 +99,12 @@ func main() {
 				Action: renewAction,
 			},
 			&cli.Command{
+				Name:   "ready",
+				Usage:  "Report 'ready to serve' to RASENMAEHER",
+				Before: commonManifestCheck,
+				Action: readyAction,
+			},
+			&cli.Command{
 				Name:   "init",
 				Usage:  "Create key, CSR and get a signed cert",
 				Before: commonManifestCheck,
@@ -100,6 +123,72 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func readyAction(ctx *cli.Context) error {
+	jsondata, err := os.ReadFile(ctx.Args().Get(0))
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Cannot open manifest file", 1)
+	}
+	datapath := ctx.String("datapath")
+	certpath := filepath.Join(datapath, "public", "mtlsclient.pem")
+	keypath := filepath.Join(datapath, "private", "mtlsclient.key")
+	if !fileExist(certpath) || !fileExist(keypath) {
+		msg := "mTLS client cert/key not found"
+		log.Fatal(msg)
+		return cli.Exit(msg, 1)
+	}
+	clientKP, err := tls.LoadX509KeyPair(certpath, keypath)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load mTLS cert/key", 1)
+	}
+
+	certpool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load system CAs", 1)
+	}
+	certpool, err = readCAs(ctx.String("capath"), certpool)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load CAs", 1)
+	}
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not resolve RASENMAEHER address", 1)
+	}
+	log.Info("Using RASENMAEHER at ", rmBase)
+
+	client := resty.New()
+	client.SetTLSClientConfig(&tls.Config{
+		RootCAs: certpool,
+	})
+	client.SetCertificates(clientKP)
+
+	// FIXME: make sure the URL and payload are specced and implemented by RASENMAEHER
+	url := fmt.Sprintf("%sapi/v1/product/ready", rmBase)
+	payload := map[string]interface{}{}
+
+	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
+	resp, err := client.R().
+		SetResult(map[string]interface{}{}).
+		SetBody(payload).
+		Post(url)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Error contacting RASENMAEHER", 1)
+	}
+	if !resp.IsSuccess() {
+		msg := "RASENMAEHER replied with error"
+		log.Fatal(msg)
+		return cli.Exit(msg, 1)
+	}
+	log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
+
+	return nil
 }
 
 func initAction(ctx *cli.Context) error {
@@ -397,7 +486,7 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	privkeypath := path.Join(privdir, "mtsclient.key")
+	privkeypath := path.Join(privdir, "mtlsclient.key")
 	err = os.WriteFile(privkeypath, privKeyPEM.Bytes(), 0640)
 	if err != nil {
 		return nil, err
