@@ -265,22 +265,12 @@ func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
 	extClientAuth := pkix.Extension{}
 	extClientAuth.Id = oidExtensionExtendedKeyUsage
 	extClientAuth.Critical = true
-	val, err = asn1.Marshal([]asn1.ObjectIdentifier{oidExtKeyUsageClientAuth})
+	val, err = asn1.Marshal([]asn1.ObjectIdentifier{oidExtKeyUsageClientAuth, oidExtKeyUsageServerAuth})
 	if err != nil {
 		return nil, err
 	}
 	extClientAuth.Value = val
 	certExtentions = append(certExtentions, extClientAuth)
-
-	extServerAuth := pkix.Extension{}
-	extServerAuth.Id = oidExtensionExtendedKeyUsage
-	extServerAuth.Critical = true
-	val, err = asn1.Marshal([]asn1.ObjectIdentifier{oidExtKeyUsageServerAuth})
-	if err != nil {
-		return nil, err
-	}
-	extServerAuth.Value = val
-	certExtentions = append(certExtentions, extServerAuth)
 
 	usageVal, err := marshalKeyUsage(x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment)
 	if err != nil {
