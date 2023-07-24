@@ -14,15 +14,13 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
-
-	"github.com/urfave/cli/v2"
 
 	"github.com/buger/jsonparser"
 	"github.com/go-resty/resty/v2"
 	"github.com/k0kubun/pp/v3"
 	"github.com/romnn/flags4urfavecli/flags"
 	log "github.com/sirupsen/logrus"
+	"github.com/urfave/cli/v2"
 )
 
 // Rev is set on build time to the git HEAD
@@ -214,7 +212,7 @@ func main() {
 					client.SetAuthToken(rmJWT)
 
 					url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
-					payload := map[string]interface{}{"csr": strings.ReplaceAll(string(csrBytes[:]), "\n", "\\n")}
+					payload := map[string]interface{}{"csr": string(csrBytes[:])}
 					log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
 					resp, err := client.R().
 						SetResult(map[string]interface{}{}).
