@@ -38,7 +38,6 @@ func commonManifestCheck(cCtx *cli.Context) error {
 	return nil
 }
 
-// FIXME: refactor
 func main() {
 	app := &cli.App{
 		Version:   Version,
@@ -74,65 +73,13 @@ func main() {
 				Name:   "ping",
 				Usage:  "Ping RASENMAEHER healthcheck endpoint",
 				Before: commonManifestCheck,
-				Action: func(ctx *cli.Context) error {
-					certpool, err := x509.SystemCertPool()
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not load system CAs", 1)
-					}
-					certpool, err = readCAs(ctx.String("capath"), certpool)
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not load CAs", 1)
-					}
-					//log.Debug("certpool: ", pp.Sprint(certpool))
-
-					jsondata, err := os.ReadFile(ctx.Args().Get(0))
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Cannot open manifest file", 1)
-					}
-
-					rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not resolve RASENMAEHER address", 1)
-					}
-					log.Info("Using RASENMAEHER at ", rmBase)
-
-					client := resty.New()
-					client.SetTLSClientConfig(&tls.Config{
-						RootCAs: certpool,
-					})
-					url := fmt.Sprintf("%sapi/v1/healthcheck", rmBase)
-					log.WithFields(log.Fields{"url": url}).Debug("GETting")
-					resp, err := client.R().SetResult(map[string]interface{}{}).Get(url)
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not ping RASENMAEHER", 1)
-					}
-					if resp.StatusCode() != 200 {
-						msg := fmt.Sprintf("Status code %d!=200", resp.StatusCode())
-						log.Fatal(msg)
-						return cli.Exit("Could not ping RASENMAEHER", 1)
-					}
-					log.Debug("resp.Body(): ", pp.Sprint(string(resp.Body()[:])))
-					log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
-					log.Info("Ping OK")
-					return nil
-				},
+				Action: pingAction,
 			},
 			&cli.Command{
 				Name:   "renew",
 				Usage:  "Renew the cert",
 				Before: commonManifestCheck,
-				Action: func(ctx *cli.Context) error {
-					log.Debug("Debug test")
-					log.Info("Info test")
-					msg := "Not implemented"
-					log.Fatal(msg)
-					return cli.Exit(msg, 1)
-				},
+				Action: renewAction,
 			},
 			&cli.Command{
 				Name:   "init",
@@ -145,92 +92,7 @@ func main() {
 						Value: 4096,
 					},
 				},
-				Action: func(ctx *cli.Context) error {
-					jsondata, err := os.ReadFile(ctx.Args().Get(0))
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Cannot open manifest file", 1)
-					}
-					dnsName, err := jsonparser.GetString(jsondata, "product", "dns")
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not resolve product DNS name", 1)
-					}
-					log.Info("Product DNS name ", dnsName)
-
-					rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not resolve RASENMAEHER address", 1)
-					}
-					log.Info("Using RASENMAEHER at ", rmBase)
-
-					rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "csr_jwt")
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
-					}
-
-					certpool, err := x509.SystemCertPool()
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not load system CAs", 1)
-					}
-					certpool, err = readCAs(ctx.String("capath"), certpool)
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not load CAs", 1)
-					}
-					//log.Debug("certpool: ", pp.Sprint(certpool))
-
-					datapath := ctx.String("datapath")
-					keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not create keypair", 1)
-					}
-					//log.Debug("keypair: ", pp.Sprint(keypair))
-
-					csrBytes, err := createCSR(dnsName, keypair)
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not create CSR", 1)
-					}
-					csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
-					err = os.WriteFile(csrpath, csrBytes, 0644)
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Could not save CSR", 1)
-					}
-					log.Info("Wrote ", csrpath)
-
-					client := resty.New()
-					client.SetTLSClientConfig(&tls.Config{
-						RootCAs: certpool,
-					})
-					client.SetAuthScheme("Bearer")
-					client.SetAuthToken(rmJWT)
-
-					url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
-					payload := map[string]interface{}{"csr": string(csrBytes[:])}
-					log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
-					resp, err := client.R().
-						SetResult(map[string]interface{}{}).
-						SetBody(payload).
-						Post(url)
-					if err != nil {
-						log.Fatal(err)
-						return cli.Exit("Error contacting RASENMAEHER", 1)
-					}
-					if !resp.IsSuccess() {
-						msg := "RASENMAEHER replied with error"
-						log.Fatal(msg)
-						return cli.Exit(msg, 1)
-					}
-					log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
-
-					return nil
-				},
+				Action: initAction,
 			},
 		},
 	}
@@ -238,6 +100,177 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func initAction(ctx *cli.Context) error {
+	jsondata, err := os.ReadFile(ctx.Args().Get(0))
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Cannot open manifest file", 1)
+	}
+	dnsName, err := jsonparser.GetString(jsondata, "product", "dns")
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not resolve product DNS name", 1)
+	}
+	log.Info("Product DNS name ", dnsName)
+
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not resolve RASENMAEHER address", 1)
+	}
+	log.Info("Using RASENMAEHER at ", rmBase)
+
+	rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "csr_jwt")
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
+	}
+
+	certpool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load system CAs", 1)
+	}
+	certpool, err = readCAs(ctx.String("capath"), certpool)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load CAs", 1)
+	}
+	//log.Debug("certpool: ", pp.Sprint(certpool))
+
+	datapath := ctx.String("datapath")
+	keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not create keypair", 1)
+	}
+	//log.Debug("keypair: ", pp.Sprint(keypair))
+
+	csrBytes, err := createCSR(dnsName, keypair)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not create CSR", 1)
+	}
+	err = savePublic(csrBytes, "mtlsclient.csr", datapath)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not save CSR", 1)
+	}
+
+	client := resty.New()
+	client.SetTLSClientConfig(&tls.Config{
+		RootCAs: certpool,
+	})
+	client.SetAuthScheme("Bearer")
+	client.SetAuthToken(rmJWT)
+
+	// FIXME: Put rmBase into the client
+	certContent, err := getSignature(csrBytes, datapath, rmBase, client)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not get CSR signed", 1)
+	}
+	_ = certContent
+
+	return nil
+}
+
+func renewAction(ctx *cli.Context) error {
+	log.Debug("Debug test")
+	log.Info("Info test")
+	msg := "Not implemented"
+	log.Fatal(msg)
+	return cli.Exit(msg, 1)
+}
+
+func pingAction(ctx *cli.Context) error {
+	certpool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load system CAs", 1)
+	}
+	certpool, err = readCAs(ctx.String("capath"), certpool)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load CAs", 1)
+	}
+	//log.Debug("certpool: ", pp.Sprint(certpool))
+
+	jsondata, err := os.ReadFile(ctx.Args().Get(0))
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Cannot open manifest file", 1)
+	}
+
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not resolve RASENMAEHER address", 1)
+	}
+	log.Info("Using RASENMAEHER at ", rmBase)
+
+	client := resty.New()
+	client.SetTLSClientConfig(&tls.Config{
+		RootCAs: certpool,
+	})
+	url := fmt.Sprintf("%sapi/v1/healthcheck", rmBase)
+	log.WithFields(log.Fields{"url": url}).Debug("GETting")
+	resp, err := client.R().SetResult(map[string]interface{}{}).Get(url)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not ping RASENMAEHER", 1)
+	}
+	if resp.StatusCode() != 200 {
+		msg := fmt.Sprintf("Status code %d!=200", resp.StatusCode())
+		log.Fatal(msg)
+		return cli.Exit("Could not ping RASENMAEHER", 1)
+	}
+	log.Debug("resp.Body(): ", pp.Sprint(string(resp.Body()[:])))
+	log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
+	log.Info("Ping OK")
+	return nil
+}
+
+func savePublic(content []byte, name string, datapath string) error {
+	filepath := filepath.Join(datapath, "public", name)
+	err := os.WriteFile(filepath, content, 0644)
+	if err != nil {
+		return err
+	}
+	log.Info("Wrote ", filepath)
+	return nil
+}
+
+func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty.Client) ([]byte, error) {
+	url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
+	payload := map[string]interface{}{"csr": string(csrBytes[:])}
+	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
+	resp, err := client.R().
+		SetResult(map[string]interface{}{}).
+		SetBody(payload).
+		Post(url)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.IsSuccess() {
+		return nil, fmt.Errorf("RASENMAEHER replied with error")
+	}
+	log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
+
+	certContent, _, _, err := jsonparser.Get(resp.Body(), "certificate")
+	if err != nil {
+		return nil, err
+	}
+
+	err = savePublic(certContent, "mtlsclient.pem", datapath)
+	if err != nil {
+		return nil, err
+	}
+
+	return certContent, nil
+
 }
 
 // references:
@@ -379,12 +412,11 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	pubkeypath := path.Join(pubdir, "mtsclient.pub")
-	err = os.WriteFile(pubkeypath, pubKeyPEM.Bytes(), 0644)
+
+	err = savePublic(pubKeyPEM.Bytes(), "mtlsclient.pub", datapath)
 	if err != nil {
 		return nil, err
 	}
-	log.Info("Wrote ", pubkeypath)
 
 	return keypair, nil
 }
