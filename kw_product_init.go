@@ -234,12 +234,12 @@ func pingAction(ctx *cli.Context) error {
 }
 
 func savePublic(content []byte, name string, datapath string) error {
-	filepath := filepath.Join(datapath, "public", name)
-	err := os.WriteFile(filepath, content, 0644)
+	tgtpath := filepath.Join(datapath, "public", name)
+	err := os.WriteFile(tgtpath, content, 0644)
 	if err != nil {
 		return err
 	}
-	log.Info("Wrote ", filepath)
+	log.Info("Wrote ", tgtpath)
 	return nil
 }
 
