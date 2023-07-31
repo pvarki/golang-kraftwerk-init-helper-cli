@@ -104,6 +104,23 @@ func main() {
 				Usage:  "Report 'ready to serve' to RASENMAEHER",
 				Before: commonManifestCheck,
 				Action: readyAction,
+				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:     "productname",
+						Usage:    "Product name to report",
+						Required: true,
+					},
+					&cli.StringFlag{
+						Name:     "apiurl",
+						Usage:    "Product API URL to report",
+						Required: true,
+					},
+					&cli.StringFlag{
+						Name:     "userurl",
+						Usage:    "Product user URL to report",
+						Required: true,
+					},
+				},
 			},
 			&cli.Command{
 				Name:   "init",
@@ -156,13 +173,11 @@ func readyAction(ctx *cli.Context) error {
 		log.Fatal(err)
 		return cli.Exit("Could not load CAs", 1)
 	}
-	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "mtls", "base_uri")
 	if err != nil {
 		log.Fatal(err)
 		return cli.Exit("Could not resolve RASENMAEHER address", 1)
 	}
-	// FIXME: we should probably expand the spec to be able to specify the mTLS base_uri
-	rmBase = strings.ReplaceAll(rmBase, "https://", "https://mtls.")
 	log.Info("Using RASENMAEHER at ", rmBase)
 
 	client := resty.New()
@@ -171,11 +186,14 @@ func readyAction(ctx *cli.Context) error {
 	})
 	client.SetCertificates(clientKP)
 
-	// FIXME: make sure the URL and payload are specced and implemented by RASENMAEHER
 	url := fmt.Sprintf("%sapi/v1/product/ready", rmBase)
-	payload := map[string]interface{}{}
+	payload := map[string]interface{}{
+		"product": ctx.String("productname"),
+		"apiurl":  ctx.String("apiurl"),
+		"url":     ctx.String("userurl"),
+	}
 
-	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
+	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing ready")
 	resp, err := client.R().
 		SetResult(map[string]interface{}{}).
 		SetBody(payload).
@@ -185,6 +203,8 @@ func readyAction(ctx *cli.Context) error {
 		return cli.Exit("Error contacting RASENMAEHER", 1)
 	}
 	if !resp.IsSuccess() {
+		log.Debug("resp.Status: ", pp.Sprint(resp.Status()))
+		log.Debug("resp.Body: ", pp.Sprint(string(resp.Body())))
 		msg := "RASENMAEHER replied with error"
 		log.Fatal(msg)
 		return cli.Exit(msg, 1)
@@ -207,14 +227,14 @@ func initAction(ctx *cli.Context) error {
 	}
 	log.Info("Product DNS name ", dnsName)
 
-	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "init", "base_uri")
 	if err != nil {
 		log.Fatal(err)
 		return cli.Exit("Could not resolve RASENMAEHER address", 1)
 	}
 	log.Info("Using RASENMAEHER at ", rmBase)
 
-	rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "csr_jwt")
+	rmJWT, err := jsonparser.GetString(jsondata, "rasenmaeher", "init", "csr_jwt")
 	if err != nil {
 		log.Fatal(err)
 		return cli.Exit("Could not resolve RASENMAEHER JWT", 1)
@@ -270,11 +290,63 @@ func initAction(ctx *cli.Context) error {
 }
 
 func renewAction(ctx *cli.Context) error {
-	log.Debug("Debug test")
-	log.Info("Info test")
-	msg := "Not implemented"
-	log.Fatal(msg)
-	return cli.Exit(msg, 1)
+	jsondata, err := os.ReadFile(ctx.Args().Get(0))
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Cannot open manifest file", 1)
+	}
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "mtls", "base_uri")
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not resolve RASENMAEHER address", 1)
+	}
+	log.Info("Using RASENMAEHER at ", rmBase)
+
+	datapath := ctx.String("datapath")
+	certpath := filepath.Join(datapath, "public", "mtlsclient.pem")
+	keypath := filepath.Join(datapath, "private", "mtlsclient.key")
+	if !fileExist(certpath) || !fileExist(keypath) {
+		msg := "mTLS client cert/key not found"
+		log.Fatal(msg)
+		return cli.Exit(msg, 1)
+	}
+	clientKP, err := tls.LoadX509KeyPair(certpath, keypath)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load mTLS cert/key", 1)
+	}
+	csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
+	if !fileExist(csrpath) {
+		msg := "CSR file not found"
+		log.Fatal(msg)
+		return cli.Exit(msg, 1)
+	}
+	certpool, err := x509.SystemCertPool()
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load system CAs", 1)
+	}
+	certpool, err = readCAs(ctx.String("capath"), certpool)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not load CAs", 1)
+	}
+
+	client := resty.New()
+	client.SetTLSClientConfig(&tls.Config{
+		RootCAs: certpool,
+	})
+	client.SetCertificates(clientKP)
+
+	// FIXME: Put rmBase into the client
+	certContent, err := renewCert(datapath, rmBase, client)
+	if err != nil {
+		log.Fatal(err)
+		return cli.Exit("Could not get CSR signed", 1)
+	}
+	_ = certContent
+
+	return nil
 }
 
 func pingAction(ctx *cli.Context) error {
@@ -296,7 +368,7 @@ func pingAction(ctx *cli.Context) error {
 		return cli.Exit("Cannot open manifest file", 1)
 	}
 
-	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "base_uri")
+	rmBase, err := jsonparser.GetString(jsondata, "rasenmaeher", "init", "base_uri")
 	if err != nil {
 		log.Fatal(err)
 		return cli.Exit("Could not resolve RASENMAEHER address", 1)
@@ -335,8 +407,47 @@ func savePublic(content []byte, name string, datapath string) error {
 	return nil
 }
 
+// FIXME: merge with renewCert
 func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty.Client) (string, error) {
 	url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
+	payload := map[string]interface{}{"csr": string(csrBytes[:])}
+	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
+	resp, err := client.R().
+		SetResult(map[string]interface{}{}).
+		SetBody(payload).
+		Post(url)
+	if err != nil {
+		return "", err
+	}
+	if !resp.IsSuccess() {
+		return "", fmt.Errorf("RASENMAEHER replied with error")
+	}
+	log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
+
+	certContent, err := jsonparser.GetString(resp.Body(), "certificate")
+	if err != nil {
+		return "", err
+	}
+	certContent = strings.ReplaceAll(certContent, "\\n", "\n")
+
+	err = savePublic([]byte(certContent), "mtlsclient.pem", datapath)
+	if err != nil {
+		return "", err
+	}
+
+	return certContent, nil
+
+}
+
+// FIXME: merge with getSignature
+func renewCert(datapath string, rmBase string, client *resty.Client) (string, error) {
+	url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
+	csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
+	csrBytes, err := os.ReadFile(csrpath)
+	if err != nil {
+		return "", err
+	}
+
 	payload := map[string]interface{}{"csr": string(csrBytes[:])}
 	log.WithFields(log.Fields{"payload": payload, "url": url}).Debug("POSTing CSR")
 	resp, err := client.R().
