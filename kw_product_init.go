@@ -420,6 +420,7 @@ func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty
 		return "", err
 	}
 	if !resp.IsSuccess() {
+		log.Errorf("Code: %d body: %s", resp.StatusCode(), resp.Body())
 		return "", fmt.Errorf("RASENMAEHER replied with error")
 	}
 	log.Debug("resp.Result(): ", pp.Sprint(resp.Result()))
