@@ -39,7 +39,7 @@ RUN --mount=type=ssh apt-get update && apt-get install -y \
     && pip3 install --user --break-system-packages pre-commit git-up \
     # Map the special names to docker host internal ip because 127.0.0.1 is *container* localhost on login
     && echo "sed 's/.*localmaeher.*//g' /etc/hosts >/etc/hosts.new && cat /etc/hosts.new >/etc/hosts" >>/root/.profile \
-    && echo "echo \"\$(getent hosts host.docker.internal | awk '{ print $1 }') localmaeher.pvarki.fi mtls.localmaeher.pvarki.fi\" >>/etc/hosts" >>/root/.profile \
+    && echo "echo \"\$(getent hosts host.docker.internal | awk '{ print $1 }') localmaeher.dev.pvarki.fi mtls.localmaeher.dev.pvarki.fi\" >>/etc/hosts" >>/root/.profile \
     && true
 
 ENTRYPOINT ["/bin/zsh", "-l"]
