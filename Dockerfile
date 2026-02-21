@@ -24,7 +24,7 @@ COPY . .
 
 # dev-shell ------------------------------
 
-FROM base as devel_shell
+FROM base AS devel_shell
 
 WORKDIR /app
 
@@ -47,14 +47,14 @@ ENTRYPOINT ["/bin/zsh", "-l"]
 
 # builder ------------------------------
 
-FROM base as builder
+FROM base AS builder
 
 WORKDIR /app
 
 # Build the kraftwerk
 RUN go build -o cmd/kw_product_init kw_product_init.go
 
-# Move to /dist directory as the place for resulting binary folder
+# Move to /dist directory AS the place for resulting binary folder
 WORKDIR /dist
 
 # Copy binary from build to main folder
@@ -63,7 +63,7 @@ RUN cp /app/cmd/kw_product_init .
 
 # production ------------------------------
 
-FROM scratch as production
+FROM scratch AS production
 
 COPY --from=builder /dist/kw_product_init /
 
