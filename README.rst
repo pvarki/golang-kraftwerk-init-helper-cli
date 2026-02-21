@@ -1,5 +1,5 @@
 golang-kraftwerk-init-helper-cli
-===============================
+================================
 
 Tool for products to create their certificates from `KRAFTWERK` manifests.
 
