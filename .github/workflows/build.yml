@@ -36,11 +36,14 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install pre-commit detect-secrets
+          export PATH=$PATH:/home/runner/.local/bin:/home/runner/go/bin
           go version || (apt-get update && apt-get install -y golang-go)
+          which golint || go install golang.org/x/lint/golint@latest
+          which goimports || go install golang.org/x/tools/cmd/goimports@latest
       - name: pre-commit
         id: pre_commit
         run: |
-          export PATH=$PATH:/home/runner/.local/bin
+          export PATH=$PATH:/home/runner/.local/bin:/home/runner/go/bin
           export SKIP=no-commit-to-branch
           pre-commit run --all-files
 
