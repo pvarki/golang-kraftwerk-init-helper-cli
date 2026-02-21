@@ -29,7 +29,7 @@ import (
 var Rev = ""
 
 // Version is incremented using bump2version
-const Version = "0.1.1"
+const Version = "1.1.0"
 
 func fileExist(pth string) bool {
 	if _, err := os.Stat(pth); err == nil {
