@@ -36,6 +36,7 @@ jobs:
         run: |
           python3 -m pip install --upgrade pip
           python3 -m pip install pre-commit detect-secrets
+          go version || (apt-get update && apt-get install -y golang-go)
       - name: pre-commit
         id: pre_commit
         run: |
