@@ -6,6 +6,18 @@ on:
     workflow_dispatch:  # Allow manual triggering
 
 jobs:
+  versiontag:
+    runs-on: ubuntu-latest
+    if: github.ref != 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check version tag
+        run: |
+          curl -f https://raw.githubusercontent.com/pvarki/golang-kraftwerk-init-helper-cli/main/kw_product_init.go -o /tmp/main_kw_product_init.go || touch /tmp/main_kw_product_init.go
+          grep "Version = " kw_product_init.go >/tmp/version.txt
+          grep "Version = " /tmp/main_kw_product_init.go >/tmp/main_version.txt
+          diff /tmp/main_version.txt /tmp/version.txt && exit 1 || exit 0
+
   test:
     runs-on: arc-runner-set
     permissions:
