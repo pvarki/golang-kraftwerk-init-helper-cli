@@ -5,8 +5,7 @@ import asyncio
 import datetime
 import os
 
-VITE_THEMES = ("default", "fdf")
-PLATFORMS = ("linux/amd64",)  #  add "linux/arm64" when we can actually build them
+PLATFORMS = ("linux/amd64", "linux/arm64")
 ISODATE = datetime.datetime.now(datetime.UTC).date().isoformat()
 ORIG_REPO = "ghcr.io"
 ALT_REPOS = ("docker.io", os.environ.get("ACR_REPO", None))
@@ -53,7 +52,7 @@ async def main() -> None:
     ret_tgts, ret_hcl = service_hcl(
         "kw_product_init",
         {
-            "image": f"ghcr.io/pvarki/kw_product_init:1.1.0{DOCKER_TAG_EXTRA}",
+            "image": f"ghcr.io/pvarki/kw_product_init:1.1.1{DOCKER_TAG_EXTRA}",
             "build": {
                 "context": "./",
                 "dockerfile": "Dockerfile",
