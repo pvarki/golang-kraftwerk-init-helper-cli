@@ -5,8 +5,7 @@ import asyncio
 import datetime
 import os
 
-VITE_THEMES = ("default", "fdf")
-PLATFORMS = ("linux/amd64",)  #  add "linux/arm64" when we can actually build them
+PLATFORMS = ("linux/amd64", "linux/arm64")
 ISODATE = datetime.datetime.now(datetime.UTC).date().isoformat()
 ORIG_REPO = "ghcr.io"
 ALT_REPOS = ("docker.io", os.environ.get("ACR_REPO", None))

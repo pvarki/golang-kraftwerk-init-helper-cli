@@ -49,7 +49,7 @@ jobs:
 
 
   build_and_publish:
-    runs-on: arc-runner-set
+    runs-on: ubuntu-latest
     needs: [test]
     env:
       PVARKI_DOCKER_REPO: ghcr.io/
@@ -86,10 +86,7 @@ jobs:
       - name: Generate bakefile
         run: |
           .github/bakefile_variants.py >bakefile.hcl
-      - name: Build
-        run: |
-          docker buildx bake -f bakefile.hcl --pull --load
-      - name: push
+      - name: Build and push
         if: ${{ !env.ACT }}
         run: |
-          docker buildx bake -f bakefile.hcl --push
+          docker buildx bake -f bakefile.hcl --pull --push
