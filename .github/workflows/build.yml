@@ -1,9 +1,9 @@
 on:
-    pull_request:
-    push:
-      branches:
-        - main
-    workflow_dispatch:  # Allow manual triggering
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch: # Allow manual triggering
 
 jobs:
   versiontag:
@@ -46,7 +46,6 @@ jobs:
           export PATH=$PATH:/home/runner/.local/bin:/home/runner/go/bin
           export SKIP=no-commit-to-branch
           pre-commit run --all-files
-
 
   build_and_publish:
     runs-on: arc-runner-set
