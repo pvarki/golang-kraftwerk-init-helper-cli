@@ -36,11 +36,11 @@ Build the image, create a container and start the container
 
 .. code-block:: bash
 
-  docker build --ssh default --target dev_shell -t kraftwerk_init_helper:dev_shell .
+  docker build --ssh default --target devel_shell -t kraftwerk_init_helper:devel_shell .
 
 .. code-block:: bash
 
-  docker create --name kraftwerk_init_helper -v `pwd`":/app" -it `echo $DOCKER_SSHAGENT` kraftwerk_init_helper:dev_shell
+  docker create --name kraftwerk_init_helper -v `pwd`":/app" -it `echo $DOCKER_SSHAGENT` kraftwerk_init_helper:devel_shell
 
 .. code-block:: bash
 

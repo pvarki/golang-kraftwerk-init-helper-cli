@@ -29,7 +29,7 @@ import (
 var Rev = ""
 
 // Version is incremented using bump2version
-const Version = "1.1.1"
+const Version = "1.3.0+260513"
 
 func fileExist(pth string) bool {
 	if _, err := os.Stat(pth); err == nil {
@@ -398,8 +398,12 @@ func pingAction(ctx *cli.Context) error {
 }
 
 func savePublic(content []byte, name string, datapath string) error {
-	tgtpath := filepath.Join(datapath, "public", name)
-	err := os.WriteFile(tgtpath, content, 0644)
+	basepath := filepath.Join(datapath, "public")
+	tgtpath := filepath.Join(basepath, name)
+	if !strings.HasPrefix(filepath.Clean(tgtpath), filepath.Clean(basepath)+string(os.PathSeparator)) {
+		return fmt.Errorf("invalid file name %q: path traversal detected", name)
+	}
+	err := os.WriteFile(tgtpath, content, 0644) // #nosec G703 -- path traversal guarded by HasPrefix check above
 	if err != nil {
 		return err
 	}
@@ -536,7 +540,7 @@ func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
 func readCAs(capath string, certpool *x509.CertPool) (*x509.CertPool, error) {
 	certFiles, err := filepath.Glob(filepath.Join(capath, "*.pem"))
 	if err != nil {
-		return nil, fmt.Errorf("Failed to scan certificate dir \"%s\": %s", capath, err)
+		return nil, fmt.Errorf("failed to scan certificate dir \"%s\": %s", capath, err)
 	}
 
 	sort.Strings(certFiles)
@@ -637,8 +641,8 @@ func marshalKeyUsage(ku x509.KeyUsage) (pkix.Extension, error) {
 	ext := pkix.Extension{Id: []int{2, 5, 29, 15}, Critical: true}
 
 	var a [2]byte
-	a[0] = reverseBitsInAByte(byte(ku))
-	a[1] = reverseBitsInAByte(byte(ku >> 8))
+	a[0] = reverseBitsInAByte(byte(uint(ku)))      // #nosec G115 -- intentional bit-slice, copied from stdlib crypto/x509
+	a[1] = reverseBitsInAByte(byte(uint(ku) >> 8)) // #nosec G115 -- intentional bit-slice, copied from stdlib crypto/x509
 
 	l := 1
 	if a[1] != 0 {
