@@ -77,26 +77,30 @@ repos:
     rev: v1.0.0-rc.4
     hooks:
       - id: go-mod-tidy-repo
+        name: Ensure go.mod matches the source code
   - repo: https://github.com/golangci/golangci-lint
     rev: v2.12.2
     hooks:
       - id: golangci-lint
+        name: Lint Go files
         types: [go]
         args: [--fix]
         stages: [pre-commit]
       - id: golangci-lint-fmt
+        name: Lint format Go files
         types: [go]
         stages: [pre-commit]
   - repo: https://github.com/tekwizely/pre-commit-golang
     rev: v1.0.0-rc.4
     hooks:
       - id: go-sec-repo-mod
+        name: Run Gosec
         stages: [pre-commit]
         args: ["-exclude-dir=tests", "-severity=high", "./..."]
   - repo: local # Local to get relevant dependencies
     hooks:
       - id: go-build
-        name: go-build
+        name: Build Go project
         entry: go build ./...
         language: system
         types: [go]
