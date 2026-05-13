@@ -1,5 +1,5 @@
 [tool.bumpversion]
-current_version = "1.1.1+260511"
+current_version = "1.2.0+260512"
 parse = "(?P<major>\\d+)\\.(?P<minor>\\d+)\\.(?P<patch>\\d+)\\+(?P<build>\\d+)"
 serialize = ["{major}.{minor}.{patch}+{build}"]
 search = "{current_version}"
@@ -28,8 +28,3 @@ calver_format = "{0Y}{0M}{0D}"
 filename = "kw_product_init.go"
 search = "const Version = \"{current_version}\""
 replace = "const Version = \"{new_version}\""
-
-[[tool.bumpversion.files]]
-filename = ".github/bakefile_variants.py"
-search = "ghcr.io/pvarki/kw_product_init:{current_version}"
-replace = "ghcr.io/pvarki/kw_product_init:{new_version}"
