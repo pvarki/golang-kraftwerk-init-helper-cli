@@ -3,6 +3,25 @@ golang-kraftwerk-init-helper-cli
 
 Tool for products to create their certificates from `KRAFTWERK` manifests.
 
+Certificate keys
+----------------
+
+``init`` defaults to EC P-256. Select RSA explicitly for products such as TAK
+that also use this identity to sign RSA JWTs::
+
+  kw_product_init init /pvarki/kraftwerk-init.json
+  kw_product_init init --keytype RSA /pvarki/kraftwerk-init.json
+  kw_product_init init --keytype EC --keybits 384 /pvarki/kraftwerk-init.json
+
+``--keytype`` is case-insensitive. EC supports 256, 384 and 521 bits; RSA defaults
+to 4096 bits and requires at least 2048. Existing ``--keybits`` callers requiring
+RSA must now also specify ``--keytype RSA``. CSRs include the product DNS name
+as a subject alternative name and request both client and server authentication.
+
+``renew`` refreshes the CSR using the existing key and certificate CN, adding a
+DNS SAN for older identities. It uses RMAPI's mTLS renewal endpoint and does not
+reuse the single-use initialization JWT or change the key algorithm.
+
 Development
 -----------
 
