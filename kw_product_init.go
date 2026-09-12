@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -29,7 +32,7 @@ import (
 var Rev = ""
 
 // Version is incremented using bump2version
-const Version = "1.3.0+260513"
+const Version = "1.4.0+260912"
 
 func fileExist(pth string) bool {
 	if _, err := os.Stat(pth); err == nil {
@@ -57,7 +60,14 @@ func commonManifestCheck(cCtx *cli.Context) error {
 }
 
 func main() {
-	app := &cli.App{
+	err := newApp().Run(os.Args)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+func newApp() *cli.App {
+	return &cli.App{
 		Version:   Version,
 		Usage:     "Create client certs, CSRs etc and get them signed by RASENMAEHER using the info from KRAFTWERK provided manifest file",
 		Name:      "kw_product_init",
@@ -127,19 +137,19 @@ func main() {
 				Usage:  "Create key, CSR and get a signed cert",
 				Before: commonManifestCheck,
 				Flags: []cli.Flag{
+					&cli.StringFlag{
+						Name:  "keytype",
+						Usage: "Private key algorithm: EC or RSA",
+						Value: "EC",
+					},
 					&cli.IntFlag{
 						Name:  "keybits",
-						Usage: "How many bits to private key",
-						Value: 4096,
+						Usage: "Private key size (default: EC 256, RSA 4096); EC supports 256, 384 or 521",
 					},
 				},
 				Action: initAction,
 			},
 		},
-	}
-	err := app.Run(os.Args)
-	if err != nil {
-		log.Fatal(err)
 	}
 }
 
@@ -253,7 +263,7 @@ func initAction(ctx *cli.Context) error {
 	//log.Debug("certpool: ", pp.Sprint(certpool))
 
 	datapath := ctx.String("datapath")
-	keypair, err := createKeyPair(datapath, ctx.Int("keybits"))
+	keypair, err := createKeyPair(datapath, ctx.String("keytype"), ctx.Int("keybits"))
 	if err != nil {
 		log.Fatal(err)
 		return cli.Exit("Could not create keypair", 1)
@@ -315,11 +325,22 @@ func renewAction(ctx *cli.Context) error {
 		log.Fatal(err)
 		return cli.Exit("Could not load mTLS cert/key", 1)
 	}
-	csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
-	if !fileExist(csrpath) {
-		msg := "CSR file not found"
-		log.Fatal(msg)
-		return cli.Exit(msg, 1)
+	// Refresh the CSR with the same key, adding a DNS SAN for identities created
+	// by older helpers. Renewal must preserve the CN authenticated by mTLS.
+	leaf, err := x509.ParseCertificate(clientKP.Certificate[0])
+	if err != nil {
+		return err
+	}
+	signer, ok := clientKP.PrivateKey.(crypto.Signer)
+	if !ok {
+		return fmt.Errorf("mTLS private key cannot sign a CSR")
+	}
+	csrBytes, err := createCSR(leaf.Subject.CommonName, signer)
+	if err != nil {
+		return err
+	}
+	if err := savePublic(csrBytes, "mtlsclient.csr", datapath); err != nil {
+		return err
 	}
 	certpool, err := x509.SystemCertPool()
 	if err != nil {
@@ -446,7 +467,7 @@ func getSignature(csrBytes []byte, datapath string, rmBase string, client *resty
 
 // FIXME: merge with getSignature
 func renewCert(datapath string, rmBase string, client *resty.Client) (string, error) {
-	url := fmt.Sprintf("%sapi/v1/product/sign_csr", rmBase)
+	url := fmt.Sprintf("%sapi/v1/product/renew_csr", rmBase)
 	csrpath := filepath.Join(datapath, "public", "mtlsclient.csr")
 	csrBytes, err := os.ReadFile(csrpath)
 	if err != nil {
@@ -487,7 +508,7 @@ func renewCert(datapath string, rmBase string, client *resty.Client) (string, er
 // https://github.com/tigera/key-cert-provisioner/blob/master/pkg/tls/tls.go#L40
 // https://gist.github.com/evantill/ebeb9535458c108e35207e0dbf6fe351#file-main_critical_extendedkeyusage_timestamping-go-L43
 // https://github.com/golang/go/issues/13739
-func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
+func createCSR(name string, keys crypto.Signer) ([]byte, error) {
 	var oidExtensionExtendedKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 37}
 	var oidExtKeyUsageClientAuth = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 3, 2}
 	var oidExtKeyUsageServerAuth = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 3, 1}
@@ -514,7 +535,11 @@ func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
 	extClientAuth.Value = val
 	certExtentions = append(certExtentions, extClientAuth)
 
-	usageVal, err := marshalKeyUsage(x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature | x509.KeyUsageDataEncipherment)
+	usage := x509.KeyUsageDigitalSignature
+	if _, ok := keys.(*rsa.PrivateKey); ok {
+		usage |= x509.KeyUsageKeyEncipherment | x509.KeyUsageDataEncipherment
+	}
+	usageVal, err := marshalKeyUsage(usage)
 	if err != nil {
 		return nil, err
 	}
@@ -523,9 +548,12 @@ func createCSR(name string, keys *rsa.PrivateKey) ([]byte, error) {
 	log.Debug("certExtentions: ", pp.Sprint(certExtentions))
 
 	var csrTemplate = x509.CertificateRequest{
-		Subject:            pkix.Name{CommonName: name},
-		SignatureAlgorithm: x509.SHA512WithRSA,
-		ExtraExtensions:    certExtentions,
+		Subject:         pkix.Name{CommonName: name},
+		DNSNames:        []string{name},
+		ExtraExtensions: certExtentions,
+	}
+	if _, ok := keys.(*rsa.PrivateKey); ok {
+		csrTemplate.SignatureAlgorithm = x509.SHA512WithRSA
 	}
 	csrCertificate, err := x509.CreateCertificateRequest(rand.Reader, &csrTemplate, keys)
 	if err != nil {
@@ -580,7 +608,34 @@ func makeDirectoryIfNotExists(path string) error {
 	return nil
 }
 
-func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
+func createKeyPair(datapath string, keytype string, keybits int) (crypto.Signer, error) {
+	keytype = strings.ToUpper(keytype)
+	var curve elliptic.Curve
+	switch keytype {
+	case "RSA":
+		if keybits == 0 {
+			keybits = 4096
+		}
+		if keybits < 2048 {
+			return nil, fmt.Errorf("RSA keys require at least 2048 bits")
+		}
+	case "EC":
+		if keybits == 0 {
+			keybits = 256
+		}
+		switch keybits {
+		case 256:
+			curve = elliptic.P256()
+		case 384:
+			curve = elliptic.P384()
+		case 521:
+			curve = elliptic.P521()
+		default:
+			return nil, fmt.Errorf("EC keybits must be 256, 384 or 521")
+		}
+	default:
+		return nil, fmt.Errorf("keytype must be EC or RSA")
+	}
 	privdir := path.Join(datapath, "private")
 	err := makeDirectoryIfNotExists(privdir)
 	if err != nil {
@@ -592,17 +647,37 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 		return nil, err
 	}
 
-	log.WithFields(log.Fields{"keybits": keybits}).Info("Generating keypair")
-	keypair, err := rsa.GenerateKey(rand.Reader, keybits)
-	if err != nil {
-		return nil, err
+	log.WithFields(log.Fields{"keytype": keytype, "keybits": keybits}).Info("Generating keypair")
+	var keypair crypto.Signer
+	var privateBlock, publicBlock pem.Block
+	if keytype == "RSA" {
+		key, err := rsa.GenerateKey(rand.Reader, keybits)
+		if err != nil {
+			return nil, err
+		}
+		keypair = key
+		privateBlock = pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}
+		publicBlock = pem.Block{Type: "RSA PUBLIC KEY", Bytes: x509.MarshalPKCS1PublicKey(&key.PublicKey)}
+	} else {
+		key, err := ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			return nil, err
+		}
+		keypair = key
+		privateDER, err := x509.MarshalECPrivateKey(key)
+		if err != nil {
+			return nil, err
+		}
+		publicDER, err := x509.MarshalPKIXPublicKey(key.Public())
+		if err != nil {
+			return nil, err
+		}
+		privateBlock = pem.Block{Type: "EC PRIVATE KEY", Bytes: privateDER}
+		publicBlock = pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}
 	}
 
 	privKeyPEM := new(bytes.Buffer)
-	err = pem.Encode(privKeyPEM, &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(keypair),
-	})
+	err = pem.Encode(privKeyPEM, &privateBlock)
 	if err != nil {
 		return nil, err
 	}
@@ -614,10 +689,7 @@ func createKeyPair(datapath string, keybits int) (*rsa.PrivateKey, error) {
 	log.Info("Wrote ", privkeypath)
 
 	pubKeyPEM := new(bytes.Buffer)
-	err = pem.Encode(pubKeyPEM, &pem.Block{
-		Type:  "RSA PUBLIC KEY",
-		Bytes: x509.MarshalPKCS1PublicKey(&keypair.PublicKey),
-	})
+	err = pem.Encode(pubKeyPEM, &publicBlock)
 	if err != nil {
 		return nil, err
 	}
