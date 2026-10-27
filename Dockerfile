@@ -1,4 +1,4 @@
-FROM golang:1.27.1-trixie AS base
+FROM golang:1.27.3-trixie AS base
 
 ENV \
     CGO_ENABLED=0 \
